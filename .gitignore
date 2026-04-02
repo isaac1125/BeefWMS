@@ -1,0 +1,25 @@
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Env (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# Node build artifacts
+**/node_modules/
+**/dist/
+**/dist-ssr/
+
+# Misc
+*.local
