@@ -7,6 +7,7 @@ import { calcOnHandPackages } from '../lib/stock'
 
 import { useCatalogStore } from '../stores/catalog'
 import type { InventoryRecordRow, ItemRow } from '../types/db'
+import DatePickerField from '../components/inputs/DatePickerField.vue'
 
 defineOptions({ name: 'InventoryPage' })
 
@@ -18,11 +19,9 @@ const successMessage = ref<string | null>(null)
 const isEditingLastWeek = ref(false)
 const isConfirmOpen = ref(false)
 const isSavedModalOpen = ref(false)
-const isCalendarOpen = ref(false)
 
 const today = new Date()
 const selectedDateISO = ref(toISODate(today))
-const calendarMonth = ref(new Date(today.getFullYear(), today.getMonth(), 1))
 const recordDateSet = ref<Set<string>>(new Set())
 
 type InventoryFormRow = {
@@ -170,45 +169,7 @@ async function refreshRecordDates() {
   recordDateSet.value = s
 }
 
-function buildMonthDays(monthStart: Date): Array<{ iso: string; day: number; isCurrentMonth: boolean }> {
-  const y = monthStart.getFullYear()
-  const m = monthStart.getMonth()
-  const first = new Date(y, m, 1)
-  const last = new Date(y, m + 1, 0)
-  const startOffset = first.getDay() // 0(Sun)~6
-  const gridStart = new Date(y, m, 1 - startOffset)
-  const days: Array<{ iso: string; day: number; isCurrentMonth: boolean }> = []
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i)
-    const iso = toISODate(d)
-    days.push({ iso, day: d.getDate(), isCurrentMonth: d.getMonth() === m })
-  }
-  // 如果當月天數很少，仍固定 6 週顯示，避免跳動
-  void last
-  return days
-}
-
-const monthDays = computed(() => buildMonthDays(calendarMonth.value))
-const monthLabel = computed(() => {
-  const d = calendarMonth.value
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  return `${y}-${m}`
-})
-
-function prevMonth() {
-  const d = calendarMonth.value
-  calendarMonth.value = new Date(d.getFullYear(), d.getMonth() - 1, 1)
-}
-
-function nextMonth() {
-  const d = calendarMonth.value
-  calendarMonth.value = new Date(d.getFullYear(), d.getMonth() + 1, 1)
-}
-
-async function pickDate(iso: string) {
-  selectedDateISO.value = iso
-  isCalendarOpen.value = false
+async function onPickDate(iso: string) {
   await loadDate(iso)
 }
 
@@ -357,59 +318,12 @@ onMounted(async () => {
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <div class="label mb-1">日期</div>
-              <button
-                type="button"
-                class="field w-full text-left flex items-center justify-between gap-3"
-                @click="
-                  calendarMonth = new Date(new Date(`${selectedDateISO}T00:00:00`).getFullYear(), new Date(`${selectedDateISO}T00:00:00`).getMonth(), 1);
-                  isCalendarOpen = !isCalendarOpen
-                "
-              >
-                <span class="text-slate-900">{{ selectedDateISO }}</span>
-                <span class="text-slate-500">📅</span>
-              </button>
-              <div v-if="isCalendarOpen" class="relative mt-2">
-                <div class="absolute z-40 w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
-                  <div class="flex items-center justify-between gap-2">
-                    <button class="btn-ghost px-3 py-1 bg-white" type="button" @click="prevMonth">上月</button>
-                    <div class="text-sm font-bold text-slate-900">{{ monthLabel }}</div>
-                    <button class="btn-ghost px-3 py-1 bg-white" type="button" @click="nextMonth">下月</button>
-                  </div>
-                  <div class="mt-3 grid grid-cols-7 gap-1 text-[11px] text-slate-500">
-                    <div class="text-center">日</div>
-                    <div class="text-center">一</div>
-                    <div class="text-center">二</div>
-                    <div class="text-center">三</div>
-                    <div class="text-center">四</div>
-                    <div class="text-center">五</div>
-                    <div class="text-center">六</div>
-                  </div>
-                  <div class="mt-2 grid grid-cols-7 gap-1">
-                    <button
-                      v-for="d in monthDays"
-                      :key="d.iso"
-                      type="button"
-                      class="h-9 rounded-lg text-sm relative"
-                      :class="[
-                        d.isCurrentMonth ? 'text-slate-900' : 'text-slate-400',
-                        d.iso === selectedDateISO ? 'bg-brand-100 ring-2 ring-brand-300/50' : 'hover:bg-slate-50',
-                      ]"
-                      @click="pickDate(d.iso)"
-                    >
-                      <span class="relative z-10">{{ d.day }}</span>
-                      <span
-                        v-if="recordDateSet.has(d.iso)"
-                        class="absolute bottom-1 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rounded-full bg-brand-500"
-                      />
-                    </button>
-                  </div>
-                  <div class="mt-3 text-xs text-slate-600">
-                    <span class="inline-flex items-center gap-2">
-                      <span class="h-2 w-2 rounded-full bg-brand-500"></span>
-                      有入庫資料的日期
-                    </span>
-                  </div>
-                </div>
+              <DatePickerField v-model="selectedDateISO" :marked-dates="recordDateSet" @update:modelValue="onPickDate" />
+              <div class="mt-2 text-xs text-slate-600">
+                <span class="inline-flex items-center gap-2">
+                  <span class="h-2 w-2 rounded-full bg-brand-500"></span>
+                  有入庫資料的日期
+                </span>
               </div>
             </div>
           </div>
@@ -434,12 +348,12 @@ onMounted(async () => {
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <div class="font-bold text-slate-900 truncate">{{ it.name }}</div>
-                <div class="mt-1 text-xs text-slate-600">
-                  本次總剩餘：
-                  <span class="font-bold text-slate-900">
-                    {{ getTotal(formByItemId[it.id] ?? { lastWeekRemaining: 0, thisWeekInbound: 0 }) }}
-                  </span>
-                  包
+              </div>
+
+              <div class="shrink-0 text-right">
+                <div class="text-[11px] text-slate-500">本次總剩餘</div>
+                <div class="mt-0.5 text-sm font-bold text-slate-900 tabular-nums">
+                  {{ getTotal(formByItemId[it.id] ?? { lastWeekRemaining: 0, thisWeekInbound: 0 }) }} 包
                 </div>
               </div>
             </div>

@@ -8,6 +8,7 @@ import { toISODate } from '../lib/week'
 import { jinLiangToTotalLiang, calcAmountByTotalLiang } from '../lib/weight'
 import { useCatalogStore } from '../stores/catalog'
 import type { ItemRow, PickupRow } from '../types/db'
+import DatePickerField from '../components/inputs/DatePickerField.vue'
 
 defineOptions({ name: 'BillingPageV2' })
 
@@ -22,6 +23,8 @@ const todayISO = toISODate(new Date())
 const monthStartISO = toISODate(startOfMonth(new Date()))
 const monthEndISO = toISODate(endOfMonth(new Date()))
 
+const activeTab = ref<'weighing' | 'payment' | 'quotes'>('weighing')
+
 const selectedCustomerId = ref<string | null>(null)
 const pendingPickups = ref<PickupRow[]>([])
 const selectedOrderDate = ref<string | null>(null)
@@ -35,9 +38,10 @@ const orderPricesByItemId = ref<Record<string, CustomerItemPrice>>({})
 const weightJinByPickupId = ref<Record<string, number>>({})
 const weightLiangByPickupId = ref<Record<string, number>>({})
 
-// today's payment for the selected order date
+/** 登記收款：只輸入金額，可分批；分配順序與「報價單日期」無關 */
 const paidTodayAmount = ref<number>(0)
-const paymentDateISO = ref<string>(todayISO)
+/** 儲存秤重報價時寫入 billing_records.billing_date（報價單日期／入帳日） */
+const billingDateISO = ref<string>(todayISO)
 
 // wage helper: total jin per customer in current month
 const monthJinByCustomerId = ref<Record<string, number>>({})
@@ -64,7 +68,36 @@ function currency(n: number): string {
   return Math.trunc(v).toString()
 }
 
+/** 報價單日期顯示為 M/D，不含年份（非 ISO 或「未設定日期」則原樣） */
+function formatBillingDateShort(dateKey: string): string {
+  if (dateKey === '未設定日期') return dateKey
+  const parts = String(dateKey).split('-')
+  if (parts.length < 3) return dateKey
+  const m = Number(parts[1])
+  const d = Number(parts[2])
+  if (!Number.isFinite(m) || !Number.isFinite(d)) return dateKey
+  return `${m}/${d}`
+}
+
+/** 區間顯示為 M/D ~ M/D（解析失敗則 fallback 原字串） */
+function formatRangeNoYear(fromISO: string, toISO: string): string {
+  const f = String(fromISO).split('-')
+  const t = String(toISO).split('-')
+  if (f.length >= 3 && t.length >= 3) {
+    const fm = Number(f[1])
+    const fd = Number(f[2])
+    const tm = Number(t[1])
+    const td = Number(t[2])
+    if ([fm, fd, tm, td].every(Number.isFinite)) return `${fm}/${fd} ~ ${tm}/${td}`
+  }
+  return `${fromISO} ~ ${toISO}`
+}
+
 const enabledCustomers = computed(() => catalog.customers.filter((c) => c.enabled))
+
+// quotes range (default: this month)
+const quoteFromISO = ref<string>(monthStartISO)
+const quoteToISO = ref<string>(monthEndISO)
 
 const pendingOrderDates = computed(() => {
   const set = new Set(pendingPickups.value.map((p) => p.pickup_date))
@@ -298,15 +331,15 @@ async function loadMonthJinForAllCustomers() {
   monthJinByCustomerId.value = map
 }
 
-async function loadMonthlyQuotes(customerId: string) {
+async function loadQuotesForRange(customerId: string, fromISO: string, toISO: string) {
   const { data, error } = await supabase
     .from('billing_records')
     .select(
       'id,pickup_id,customer_id,item_id,weight_jin,weight_liang,total_amount,paid_amount,current_debt,billing_date',
     )
     .eq('customer_id', customerId)
-    .gte('billing_date', monthStartISO)
-    .lte('billing_date', monthEndISO)
+    .gte('billing_date', fromISO)
+    .lte('billing_date', toISO)
     .order('billing_date', { ascending: false })
 
   if (error) throw error
@@ -358,7 +391,7 @@ async function submitSelectedOrderBilling() {
         paid_amount: 0,
         previous_debt: 0,
         current_debt: currentDebt,
-        billing_date: paymentDateISO.value,
+        billing_date: billingDateISO.value,
         weight_jin: requiresWeighing ? weightJin : null,
         weight_liang: requiresWeighing ? weightLiang : null,
       }
@@ -379,7 +412,7 @@ async function submitSelectedOrderBilling() {
 
     // refresh
     await loadPendingPickups(selectedCustomerId.value)
-    await loadMonthlyQuotes(selectedCustomerId.value)
+    await loadQuotesForRange(selectedCustomerId.value, quoteFromISO.value, quoteToISO.value)
     await loadMonthJinForAllCustomers()
     isOrderSavedModalOpen.value = true
   } catch (e) {
@@ -438,7 +471,7 @@ async function receiveCustomerPayment() {
 
     paidTodayAmount.value = 0
     successMessage.value = '已登記收款'
-    await loadMonthlyQuotes(selectedCustomerId.value!)
+    await loadQuotesForRange(selectedCustomerId.value!, quoteFromISO.value, quoteToISO.value)
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : 'Failed to update payment'
   } finally {
@@ -449,12 +482,19 @@ async function receiveCustomerPayment() {
 watch(selectedCustomerId, (val) => {
   if (!val) return
   void loadPendingPickups(val)
-  void loadMonthlyQuotes(val)
+  expandedInvoiceDate.value = null
+  void loadQuotesForRange(val, quoteFromISO.value, quoteToISO.value)
 })
 
 watch(selectedOrderDate, (val) => {
   if (!val) return
   void loadOrderPricesAndInitWeights()
+})
+
+watch([quoteFromISO, quoteToISO], ([fromISO, toISO]) => {
+  if (!selectedCustomerId.value) return
+  expandedInvoiceDate.value = null
+  void loadQuotesForRange(selectedCustomerId.value, fromISO, toISO)
 })
 
 onMounted(async () => {
@@ -467,7 +507,7 @@ onMounted(async () => {
   if (selectedCustomerId.value) {
     await loadMonthJinForAllCustomers()
     await loadPendingPickups(selectedCustomerId.value)
-    await loadMonthlyQuotes(selectedCustomerId.value)
+    await loadQuotesForRange(selectedCustomerId.value, quoteFromISO.value, quoteToISO.value)
 
     if (qOrderDate && pendingOrderDates.value.includes(qOrderDate)) {
       selectedOrderDate.value = qOrderDate
@@ -559,210 +599,236 @@ onMounted(async () => {
             <div v-if="errorMessage" class="mt-2 text-sm text-red-600">{{ errorMessage }}</div>
             <div v-if="successMessage" class="mt-2 text-sm text-green-700">{{ successMessage }}</div>
 
-            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <div class="label mb-1">收款日期</div>
-                <input class="field" type="date" v-model="paymentDateISO" />
-              </div>
-              <div>
-                <div class="label mb-1">收款金額</div>
-                <input class="field" type="number" min="0" step="1" v-model.number="paidTodayAmount" />
-              </div>
-            </div>
-
-            <div class="mt-3">
-              <button class="btn-ghost w-full bg-white" :disabled="loading" @click="receiveCustomerPayment">
-                登記收款（客戶/日期/金額）
+            <div class="mt-3 grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                class="rounded-xl border px-3 py-2 text-sm font-bold"
+                :class="activeTab === 'weighing' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-700'"
+                @click="activeTab = 'weighing'"
+              >
+                秤重
+              </button>
+              <button
+                type="button"
+                class="rounded-xl border px-3 py-2 text-sm font-bold"
+                :class="activeTab === 'payment' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-700'"
+                @click="activeTab = 'payment'"
+              >
+                收款
+              </button>
+              <button
+                type="button"
+                class="rounded-xl border px-3 py-2 text-sm font-bold"
+                :class="activeTab === 'quotes' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-700'"
+                @click="activeTab = 'quotes'"
+              >
+                報價單
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <template v-if="activeTab === 'weighing'">
         <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div class="text-sm font-bold text-slate-900">待秤重的單（按日期）</div>
-          <div v-if="pendingOrderDates.length === 0" class="mt-2 text-sm text-slate-600">目前沒有待秤重取貨單</div>
-          <div v-else class="mt-3 space-y-2">
-            <div
-              v-for="d in pendingOrderDates"
-              :key="d"
-              class="rounded-xl border border-slate-200 bg-white p-2 cursor-pointer transition-colors duration-200"
-              :class="selectedOrderDate === d ? 'border-brand-500 ring-2 ring-brand-300/40' : 'hover:bg-slate-50'"
-              @click="selectedOrderDate = d"
-            >
-              <div class="text-xs text-slate-600">日期</div>
-              <div class="text-sm font-bold text-slate-900">{{ d }}</div>
-            </div>
+          <div class="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-3">
+            <div class="label mb-1">報價單日期</div>
+            <DatePickerField v-model="billingDateISO" />
+            <p class="mt-1.5 text-[11px] leading-relaxed text-slate-500">只影響「儲存秤重報價」建立的新報價單日期。</p>
           </div>
         </div>
 
-        <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" v-if="selectedOrderDate">
-          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <div class="text-base font-bold tracking-tight text-slate-900">秤重報價單</div>
-                <div class="mt-1 text-xs text-slate-600">取貨日期：{{ selectedOrderDate }}</div>
+        <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div class="text-sm font-bold text-slate-900">待秤重的單（按日期）</div>
+            <div v-if="pendingOrderDates.length === 0" class="mt-2 text-sm text-slate-600">目前沒有待秤重取貨單</div>
+            <div v-else class="mt-3 space-y-2">
+              <div
+                v-for="d in pendingOrderDates"
+                :key="d"
+                class="rounded-xl border border-slate-200 bg-white p-2 cursor-pointer transition-colors duration-200"
+                :class="selectedOrderDate === d ? 'border-brand-500 ring-2 ring-brand-300/40' : 'hover:bg-slate-50'"
+                @click="selectedOrderDate = d"
+              >
+                <div class="text-xs text-slate-600">日期</div>
+                <div class="text-sm font-bold text-slate-900">{{ d }}</div>
               </div>
             </div>
           </div>
 
-          <div class="mt-3 space-y-2">
-            <div
-              v-for="p in selectedOrderPickups"
-              :key="p.id"
-              class="rounded-xl border border-slate-200 bg-white p-3"
-            >
-              <div class="grid grid-cols-3 gap-2 text-sm">
-                <div class="font-bold text-slate-900">{{ getItemName(p.item_id) }}</div>
-                <div class="text-slate-700">{{ p.quantity }} 包</div>
-                <div class="text-right text-slate-700">{{ getPriceTextForPickup(p) }}</div>
+          <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" v-if="selectedOrderDate">
+            <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-base font-bold tracking-tight text-slate-900">秤重報價單</div>
+                  <div class="mt-1 text-xs text-slate-600">取貨日期：{{ selectedOrderDate }}</div>
+                </div>
               </div>
+            </div>
 
-              <div class="mt-2 flex items-center justify-between gap-3">
-                <div
-                  class="flex items-center gap-2 overflow-x-auto whitespace-nowrap [-webkit-overflow-scrolling:touch]"
-                >
-                  <template v-if="orderPricesByItemId[p.item_id]?.requiresWeighing">
-                    <input
-                      class="field w-16 sm:w-20 text-right"
-                      type="number"
-                      min="0"
-                      max="99"
-                      step="1"
-                      inputmode="numeric"
-                      :value="weightJinByPickupId[p.id] ?? 0"
-                      @input="
-                        weightJinByPickupId[p.id] = Math.min(
-                          99,
-                          Math.max(0, Math.trunc(Number(($event.target as HTMLInputElement).valueAsNumber ?? 0))),
-                        )
-                      "
-                    />
-                    <div class="text-sm font-semibold text-slate-700 shrink-0">斤</div>
-                    <input
-                      class="field w-16 sm:w-20 text-right"
-                      type="number"
-                      min="0"
-                      max="15"
-                      step="1"
-                      inputmode="numeric"
-                      :value="weightLiangByPickupId[p.id] ?? 0"
-                      @input="
-                        weightLiangByPickupId[p.id] = Math.min(
-                          15,
-                          Math.max(0, Math.trunc(Number(($event.target as HTMLInputElement).valueAsNumber ?? 0))),
-                        )
-                      "
-                    />
-                    <div class="text-sm font-semibold text-slate-700 shrink-0">兩</div>
-                  </template>
-                  <template v-else>
-                    <div class="text-xs text-slate-600 shrink-0">免秤重（依包數計價）</div>
-                  </template>
+            <div class="mt-3 space-y-2">
+              <div v-for="p in selectedOrderPickups" :key="p.id" class="rounded-xl border border-slate-200 bg-white p-3">
+                <div class="grid grid-cols-3 gap-2 text-sm">
+                  <div class="font-bold text-slate-900">{{ getItemName(p.item_id) }}</div>
+                  <div class="text-slate-700">{{ p.quantity }} 包</div>
+                  <div class="text-right text-slate-700">{{ getPriceTextForPickup(p) }}</div>
                 </div>
 
-                <div class="flex items-center gap-2 whitespace-nowrap shrink-0">
-                  <div class="text-[11px] text-slate-500 whitespace-nowrap">金額</div>
-                  <div class="text-base font-bold text-brand-600 whitespace-nowrap">
-                    {{ currency(calcPickupTotalAmount(p)) }} 元
+                <div class="mt-2 flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2 overflow-x-auto whitespace-nowrap [-webkit-overflow-scrolling:touch]">
+                    <template v-if="orderPricesByItemId[p.item_id]?.requiresWeighing">
+                      <input
+                        class="field w-16 sm:w-20 text-right"
+                        type="number"
+                        min="0"
+                        max="99"
+                        step="1"
+                        inputmode="numeric"
+                        :value="weightJinByPickupId[p.id] ?? 0"
+                        @input="
+                          weightJinByPickupId[p.id] = Math.min(
+                            99,
+                            Math.max(0, Math.trunc(Number(($event.target as HTMLInputElement).valueAsNumber ?? 0))),
+                          )
+                        "
+                      />
+                      <div class="text-sm font-semibold text-slate-700 shrink-0">斤</div>
+                      <input
+                        class="field w-16 sm:w-20 text-right"
+                        type="number"
+                        min="0"
+                        max="15"
+                        step="1"
+                        inputmode="numeric"
+                        :value="weightLiangByPickupId[p.id] ?? 0"
+                        @input="
+                          weightLiangByPickupId[p.id] = Math.min(
+                            15,
+                            Math.max(0, Math.trunc(Number(($event.target as HTMLInputElement).valueAsNumber ?? 0))),
+                          )
+                        "
+                      />
+                      <div class="text-sm font-semibold text-slate-700 shrink-0">兩</div>
+                    </template>
+                    <template v-else>
+                      <div class="text-xs text-slate-600 shrink-0">免秤重（依包數計價）</div>
+                    </template>
+                  </div>
+
+                  <div class="flex items-center gap-2 whitespace-nowrap shrink-0">
+                    <div class="text-[11px] text-slate-500 whitespace-nowrap">金額</div>
+                    <div class="text-base font-bold text-brand-600 whitespace-nowrap">{{ currency(calcPickupTotalAmount(p)) }} 元</div>
                   </div>
                 </div>
               </div>
             </div>
+
+            <div class="mt-4">
+              <button class="btn-primary w-full" :disabled="loading" @click="requestSubmitSelectedOrderBilling">儲存秤重報價</button>
+            </div>
           </div>
 
-          <div class="mt-4">
-            <button class="btn-primary w-full" :disabled="loading" @click="requestSubmitSelectedOrderBilling">
-              儲存秤重報價
-            </button>
-          </div>
-        </div>
-
-        <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" v-else>
-          <div class="text-sm font-bold text-slate-900">請先選擇待秤重的日期</div>
-        </div>
-      </div>
-
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <div class="text-base font-bold tracking-tight text-slate-900">本月報價單</div>
-            <div class="mt-1 text-xs text-slate-500">區間：{{ monthStartISO }} ~ {{ monthEndISO }}</div>
-          </div>
-          <div
-            class="rounded-full px-3 py-1 text-sm font-bold"
-            :class="monthlyUnpaidTotal > 0 ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'"
-          >
-            未付累積 {{ currency(monthlyUnpaidTotal) }} 元
+          <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" v-else>
+            <div class="text-sm font-bold text-slate-900">請先選擇待秤重的日期</div>
           </div>
         </div>
+      </template>
 
-        <div v-if="groupedMonthlyQuotes.length === 0" class="mt-3 text-sm text-slate-600">本月尚無報價單</div>
-        <div v-else class="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
-          <table class="w-full text-sm bg-white">
-            <thead class="text-left text-slate-500 bg-slate-50/80">
-              <tr>
-                <th class="py-3 px-3">報價單日期</th>
-                <th class="py-3 px-3">品項數</th>
-                <th class="py-3 px-3">總金額</th>
-                <th class="py-3 px-3">已付</th>
-                <th class="py-3 px-3">未付</th>
-                <th class="py-3 px-3 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="q in groupedMonthlyQuotes" :key="q.billingDate" class="border-t border-slate-100 hover:bg-slate-50/60">
-                <td class="py-3 px-3 whitespace-nowrap font-semibold text-slate-900">{{ q.billingDate }}</td>
-                <td class="py-3 px-3 whitespace-nowrap text-slate-700">{{ q.itemCount }}</td>
-                <td class="py-3 px-3 whitespace-nowrap text-slate-700">{{ currency(q.totalAmount) }} 元</td>
-                <td class="py-3 px-3 whitespace-nowrap text-slate-700">{{ currency(q.paidAmount) }} 元</td>
-                <td class="py-3 px-3 whitespace-nowrap font-bold" :class="q.currentDebt > 0 ? 'text-red-600' : 'text-green-700'">
-                  {{ currency(q.currentDebt) }} 元
-                </td>
-                <td class="py-3 px-3 whitespace-nowrap text-right">
-                  <button
-                    class="btn-ghost px-3 py-1 text-xs bg-white"
-                    @click="expandedInvoiceDate = expandedInvoiceDate === q.billingDate ? null : q.billingDate"
-                  >
-                    {{ expandedInvoiceDate === q.billingDate ? '收合' : '明細' }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="px-3 py-2 text-xs text-slate-500 border-t border-slate-100">同日期已合併為同一張報價單總額。</div>
+      <template v-else-if="activeTab === 'payment'">
+        <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-base font-bold tracking-tight text-slate-900">登記收款</div>
+          <div class="mt-1 text-xs text-slate-600">可分批收款；系統依未付欠款由舊到新分配。</div>
 
-          <div v-if="expandedInvoiceDate" class="m-3 rounded-xl border border-slate-200 p-3 bg-slate-50/60">
-            <div class="text-sm font-bold text-slate-900">報價單明細：{{ expandedInvoiceDate }}</div>
-            <div class="mt-2 overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead class="text-left text-slate-700">
-                  <tr>
-                    <th class="py-2 pr-2">品項</th>
-                    <th class="py-2 pr-2">重量</th>
-                    <th class="py-2 pr-2">金額</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="d in groupedInvoiceDetails[expandedInvoiceDate] ?? []" :key="d.id" class="border-t border-slate-100">
-                    <td class="py-2 pr-2 whitespace-nowrap text-slate-900 font-semibold">{{ d.itemName }}</td>
-                    <td class="py-2 pr-2 whitespace-nowrap text-slate-700">{{ d.weightText }}</td>
-                    <td class="py-2 pr-2 whitespace-nowrap text-slate-700">{{ d.amountText }}</td>
-                  </tr>
-                </tbody>
-              </table>
+          <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <div class="label mb-1">本次收款金額</div>
+            <input class="field" type="number" min="0" step="1" inputmode="numeric" placeholder="本次收到幾元" v-model.number="paidTodayAmount" />
+            <div class="mt-3">
+              <button class="btn-primary w-full" :disabled="loading" @click="receiveCustomerPayment">登記這筆收款</button>
             </div>
           </div>
         </div>
-      </div>
+      </template>
 
-      <div class="text-xs text-slate-600 px-1">
-        本月斤數（工資用）：
-        <span v-for="c in enabledCustomers" :key="c.id" class="mr-3">
-          {{ c.name }} {{ monthJinByCustomerId[c.id] ?? 0 }}斤
-        </span>
-      </div>
+      <template v-else>
+        <!-- 報價單：卡片 + 區間 -->
+        <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-base font-bold tracking-tight text-slate-900">報價單</div>
+              <div class="mt-1 text-xs text-slate-500">區間：{{ formatRangeNoYear(quoteFromISO, quoteToISO) }}</div>
+            </div>
+            <div
+              class="rounded-full px-3 py-1 text-sm font-bold"
+              :class="monthlyUnpaidTotal > 0 ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'"
+            >
+              未付累積 {{ currency(monthlyUnpaidTotal) }} 元
+            </div>
+          </div>
+
+          <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <div class="text-sm font-bold text-slate-900">查看區間</div>
+            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div class="label mb-1">開始</div>
+                <DatePickerField v-model="quoteFromISO" />
+              </div>
+              <div>
+                <div class="label mb-1">結束</div>
+                <DatePickerField v-model="quoteToISO" />
+              </div>
+            </div>
+            <p class="mt-2 text-[11px] text-slate-500">預設本月；切換客戶或區間會自動更新。</p>
+          </div>
+
+          <div v-if="groupedMonthlyQuotes.length === 0" class="mt-3 text-sm text-slate-600">此區間尚無報價單</div>
+          <div v-else class="mt-4 space-y-3">
+            <div v-for="q in groupedMonthlyQuotes" :key="q.billingDate" class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <button type="button" class="w-full text-left p-2.5 transition-colors hover:bg-slate-50/80" @click="expandedInvoiceDate = expandedInvoiceDate === q.billingDate ? null : q.billingDate">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-sm font-bold text-slate-900">{{ formatBillingDateShort(q.billingDate) }}</div>
+                    <div class="mt-0.5 text-[11px] text-slate-600">{{ q.itemCount }} 項</div>
+                  </div>
+                  <div class="shrink-0 text-right">
+                    <div class="text-sm font-bold tabular-nums" :class="q.currentDebt > 0 ? 'text-red-600' : 'text-emerald-700'">
+                      未付 {{ currency(q.currentDebt) }}
+                    </div>
+                    <div class="mt-0.5 text-[11px] font-semibold text-brand-600">
+                      {{ expandedInvoiceDate === q.billingDate ? '收合 ▲' : '明細 ▼' }}
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                  <span class="tabular-nums">總 {{ currency(q.totalAmount) }}</span>
+                  <span class="tabular-nums">已付 {{ currency(q.paidAmount) }}</span>
+                </div>
+              </button>
+
+              <div v-if="expandedInvoiceDate === q.billingDate" class="border-t border-slate-100 bg-slate-50/70 px-2.5 py-2.5">
+                <div class="text-[11px] font-bold text-slate-700">品項明細</div>
+                <div class="mt-2 space-y-1.5">
+                  <div v-for="d in groupedInvoiceDetails[q.billingDate] ?? []" :key="d.id" class="rounded-lg border border-slate-200/80 bg-white px-2.5 py-2">
+                    <div class="text-sm font-semibold text-slate-900 leading-snug break-words">{{ d.itemName }}</div>
+                    <div class="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-[11px]">
+                      <span class="text-slate-600">重 {{ d.weightText }}</span>
+                      <span class="font-bold text-slate-900 tabular-nums">{{ d.amountText }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="text-xs text-slate-500 px-0.5">同日期已合併為同一張報價單總額。</div>
+          </div>
+        </div>
+
+        <div class="text-xs text-slate-600 px-1">
+          本月斤數（工資用）：
+          <span v-for="c in enabledCustomers" :key="c.id" class="mr-3">
+            {{ c.name }} {{ monthJinByCustomerId[c.id] ?? 0 }}斤
+          </span>
+        </div>
+      </template>
     </div>
   </div>
 </template>
