@@ -623,7 +623,7 @@ watch([activeTab, overviewMonthISO], () => {
   <div class="p-4 bg-slate-50/70 min-h-full">
     <div
       v-if="isSavedModalOpen"
-      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4"
+      class="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))] sm:pb-4"
       @click.self="isSavedModalOpen = false"
     >
       <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
@@ -637,7 +637,7 @@ watch([activeTab, overviewMonthISO], () => {
 
     <div
       v-if="isSaveModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 p-4 max-sm:pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))]"
       @click.self="isSaveModalOpen = false"
     >
       <div class="w-full max-w-md max-h-[85vh] overflow-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
@@ -732,7 +732,7 @@ watch([activeTab, overviewMonthISO], () => {
           </div>
 
           <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-            <div class="grid grid-cols-2 gap-3 items-end">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
               <div class="min-w-0">
                 <div class="label mb-1">選客戶</div>
                 <select class="field w-full" v-model="selectedCustomerId">
@@ -908,26 +908,30 @@ watch([activeTab, overviewMonthISO], () => {
           </p>
         </div>
 
-        <!-- 取貨明細表：入庫 → 明細 → 本月小計 → 剩餘 -->
-        <div class="rounded-2xl border border-slate-200 overflow-hidden">
-          <table class="w-full table-fixed text-[11px] md:text-[12px] bg-white">
+        <!-- 取貨明細表：入庫 → 明細 → 本月小計 → 剩餘（手機橫向捲動，避免 table-fixed 裁切） -->
+        <div
+          class="rounded-2xl border border-slate-200 bg-white -mx-1 overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable] sm:mx-0"
+        >
+          <table
+            class="w-full min-w-[32rem] border-collapse text-[11px] md:min-w-0 md:table-fixed md:text-[12px]"
+          >
             <thead class="text-left text-slate-500 bg-amber-100/70">
               <tr>
-                <th class="py-2 px-2 md:py-3 md:px-3 w-[56px] md:w-[76px] whitespace-nowrap">日期</th>
-                <th class="py-2 px-2 md:py-3 md:px-3 w-[72px] md:w-[92px] whitespace-nowrap">客戶</th>
+                <th class="py-2 px-2 md:py-3 md:px-3 whitespace-nowrap md:w-[76px]">日期</th>
+                <th class="py-2 px-2 md:py-3 md:px-3 whitespace-nowrap md:w-[92px]">客戶</th>
                 <th
                   v-for="it in enabledItems"
                   :key="`h-${it.id}`"
-                  class="py-2 px-1.5 md:py-3 md:px-2 text-center font-semibold text-slate-700"
+                  class="py-2 px-1.5 md:py-3 md:px-2 text-center font-semibold text-slate-700 min-w-[2.25rem] md:min-w-0"
                   :class="{
                     hidden: overviewVisibleItemsMobile.length > 0 && !overviewVisibleItemsMobile.some((x) => x.id === it.id),
                     'md:table-cell': true,
                   }"
                   :title="it.name"
                 >
-                  <span class="block truncate">{{ overviewItemShortLabel(it) }}</span>
+                  <span class="block text-center leading-tight break-words">{{ overviewItemShortLabel(it) }}</span>
                 </th>
-                <th class="py-2 px-2 md:py-3 md:px-3 w-[52px] md:w-[64px] text-right whitespace-nowrap">小計</th>
+                <th class="py-2 px-2 md:py-3 md:px-3 text-right whitespace-nowrap md:w-[64px]">小計</th>
               </tr>
             </thead>
             <tbody>

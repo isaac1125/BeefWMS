@@ -67,15 +67,15 @@ function pickDate(iso: string) {
   <div class="relative">
     <button
       type="button"
-      class="field w-full text-left flex items-center justify-between gap-3"
+      class="field w-full min-h-[2.75rem] text-left flex items-center justify-between gap-2"
       @click="isOpen = !isOpen"
     >
-      <span class="text-slate-900">{{ modelValue || placeholder || '請選擇日期' }}</span>
+      <span class="min-w-0 text-slate-900 tabular-nums whitespace-nowrap">{{ modelValue || placeholder || '請選擇日期' }}</span>
       <span class="text-slate-500">📅</span>
     </button>
 
     <!-- Desktop: dropdown popover -->
-    <div v-if="isOpen" class="hidden sm:block absolute z-40 mt-2 w-full">
+    <div v-if="isOpen" class="hidden sm:block absolute z-[90] mt-2 w-full">
       <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
         <div class="flex items-center justify-between gap-2">
           <button class="btn-ghost px-3 py-1 bg-white" type="button" @click="prevMonth">上月</button>
@@ -118,7 +118,7 @@ function pickDate(iso: string) {
     <!-- Mobile: compact bottom sheet（不跟著窄欄壓縮） -->
     <div
       v-if="isOpen"
-      class="sm:hidden fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-10"
+      class="sm:hidden fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/40 px-3 pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))] pt-10"
       @click.self="isOpen = false"
     >
       <div

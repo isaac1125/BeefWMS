@@ -229,7 +229,7 @@ onMounted(async () => {
   <div class="p-4 bg-slate-50/70 min-h-full">
     <div
       v-if="isSavedModalOpen"
-      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      class="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))] sm:pb-4"
       @click.self="isSavedModalOpen = false"
     >
       <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
@@ -243,7 +243,7 @@ onMounted(async () => {
 
     <div
       v-if="isConfirmOpen"
-      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      class="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))] sm:pb-4"
       @click.self="isConfirmOpen = false"
     >
       <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
