@@ -144,15 +144,6 @@ function requestSave() {
   isConfirmOpen.value = true
 }
 
-function clearFormNumbers() {
-  const cleared: Record<string, InventoryFormRow> = {}
-  items.value.forEach((it: ItemRow) => {
-    cleared[it.id] = { lastWeekRemaining: 0, thisWeekInbound: 0 }
-  })
-  formByItemId.value = cleared
-  isEditingLastWeek.value = false
-}
-
 async function refreshRecordDates() {
   // 取出近期有入庫紀錄的日期，用於日曆上色
   const { data, error } = await supabase
@@ -218,7 +209,6 @@ async function saveDateConfirmed() {
       }
     }
 
-    clearFormNumbers()
     await refreshRecordDates()
     isSavedModalOpen.value = true
   } catch (e) {
@@ -239,12 +229,12 @@ onMounted(async () => {
   <div class="p-4 bg-slate-50/70 min-h-full">
     <div
       v-if="isSavedModalOpen"
-      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4"
+      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
       @click.self="isSavedModalOpen = false"
     >
       <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
         <div class="text-base font-bold text-slate-900">修改完成</div>
-        <div class="mt-2 text-sm text-slate-700">已成功存檔，表單已清空。</div>
+        <div class="mt-2 text-sm text-slate-700">已成功存檔。</div>
         <div class="mt-4">
           <button class="btn-primary w-full" @click="isSavedModalOpen = false">知道了</button>
         </div>
@@ -253,7 +243,7 @@ onMounted(async () => {
 
     <div
       v-if="isConfirmOpen"
-      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4"
+      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
       @click.self="isConfirmOpen = false"
     >
       <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
@@ -296,7 +286,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="mt-3 text-xs text-slate-600">確認存檔後會寫入資料庫，且頁面數字會清空。</div>
+        <div class="mt-3 text-xs text-slate-600">確認存檔後會寫入資料庫。</div>
         <div class="mt-4 grid grid-cols-2 gap-2">
           <button class="btn-ghost w-full bg-white" :disabled="loading" @click="isConfirmOpen = false">取消</button>
           <button class="btn-primary w-full" :disabled="loading" @click="saveDateConfirmed">確認存檔</button>
@@ -369,7 +359,7 @@ onMounted(async () => {
                   step="1"
                   :disabled="!isEditingLastWeek"
                   :class="!isEditingLastWeek ? 'bg-slate-100 text-slate-700' : ''"
-                  :value="formByItemId[it.id]?.lastWeekRemaining ?? 0"
+                  :value="(formByItemId[it.id]?.lastWeekRemaining ?? 0) === 0 ? '' : (formByItemId[it.id]?.lastWeekRemaining ?? 0)"
                   @input="
                     formByItemId[it.id].lastWeekRemaining = Math.max(
                       0,
@@ -386,7 +376,7 @@ onMounted(async () => {
                   inputmode="numeric"
                   min="0"
                   step="1"
-                  :value="formByItemId[it.id]?.thisWeekInbound ?? 0"
+                  :value="(formByItemId[it.id]?.thisWeekInbound ?? 0) === 0 ? '' : (formByItemId[it.id]?.thisWeekInbound ?? 0)"
                   @input="
                     formByItemId[it.id].thisWeekInbound = Math.max(
                       0,
@@ -421,7 +411,7 @@ onMounted(async () => {
                     step="1"
                     :disabled="!isEditingLastWeek"
                     :class="!isEditingLastWeek ? 'bg-slate-100 text-slate-700' : ''"
-                    :value="formByItemId[it.id]?.lastWeekRemaining ?? 0"
+                    :value="(formByItemId[it.id]?.lastWeekRemaining ?? 0) === 0 ? '' : (formByItemId[it.id]?.lastWeekRemaining ?? 0)"
                     @input="
                       formByItemId[it.id].lastWeekRemaining = Math.max(
                         0,
@@ -437,7 +427,7 @@ onMounted(async () => {
                     inputmode="numeric"
                     min="0"
                     step="1"
-                    :value="formByItemId[it.id]?.thisWeekInbound ?? 0"
+                    :value="(formByItemId[it.id]?.thisWeekInbound ?? 0) === 0 ? '' : (formByItemId[it.id]?.thisWeekInbound ?? 0)"
                     @input="
                       formByItemId[it.id].thisWeekInbound = Math.max(
                         0,

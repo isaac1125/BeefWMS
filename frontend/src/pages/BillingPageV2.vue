@@ -7,7 +7,7 @@ import { supabase, getCustomerItemPrice, type CustomerItemPrice } from '../lib/s
 import { toISODate } from '../lib/week'
 import { jinLiangToTotalLiang, calcAmountByTotalLiang } from '../lib/weight'
 import { useCatalogStore } from '../stores/catalog'
-import type { ItemRow, PickupRow } from '../types/db'
+import type { ItemRow, PickupRow, PaymentRecordRow } from '../types/db'
 import DatePickerField from '../components/inputs/DatePickerField.vue'
 
 defineOptions({ name: 'BillingPageV2' })
@@ -40,6 +40,7 @@ const weightLiangByPickupId = ref<Record<string, number>>({})
 
 /** 登記收款：只輸入金額，可分批；分配順序與「報價單日期」無關 */
 const paidTodayAmount = ref<number>(0)
+const paymentDateISO = ref<string>(todayISO)
 /** 儲存秤重報價時寫入 billing_records.billing_date（報價單日期／入帳日） */
 const billingDateISO = ref<string>(todayISO)
 
@@ -61,6 +62,34 @@ const monthlyQuotes = ref<
     billing_date: string | null
   }>
 >([])
+
+const paymentRecords = ref<PaymentRecordRow[]>([])
+
+function isMissingPaymentRecordsTable(err: unknown): boolean {
+  const msg =
+    typeof err === 'string'
+      ? err
+      : (err as any)?.message || (err as any)?.error_description || (err as any)?.hint || ''
+  return String(msg).includes('payment_records') && String(msg).includes('does not exist')
+}
+
+async function loadPaymentRecords(customerId: string) {
+  const { data, error } = await supabase
+    .from('payment_records')
+    .select('id,customer_id,payment_date,amount,created_at')
+    .eq('customer_id', customerId)
+    .order('payment_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(30)
+  if (error) {
+    if (isMissingPaymentRecordsTable(error)) {
+      paymentRecords.value = []
+      return
+    }
+    throw error
+  }
+  paymentRecords.value = (data ?? []) as PaymentRecordRow[]
+}
 
 function currency(n: number): string {
   const v = Number(n ?? 0)
@@ -101,7 +130,7 @@ const quoteToISO = ref<string>(monthEndISO)
 
 const pendingOrderDates = computed(() => {
   const set = new Set(pendingPickups.value.map((p) => p.pickup_date))
-  return Array.from(set.values()).sort((a, b) => (a < b ? 1 : -1))
+  return Array.from(set.values()).sort((a, b) => (a < b ? -1 : 1))
 })
 
 const selectedOrderPickups = computed(() => {
@@ -469,9 +498,17 @@ async function receiveCustomerPayment() {
       if (updErr) throw updErr
     }
 
+    const { error: insPayErr } = await supabase.from('payment_records').insert({
+      customer_id: selectedCustomerId.value,
+      payment_date: paymentDateISO.value,
+      amount: payNow,
+    })
+    if (insPayErr && !isMissingPaymentRecordsTable(insPayErr)) throw insPayErr
+
     paidTodayAmount.value = 0
-    successMessage.value = '已登記收款'
+    successMessage.value = insPayErr ? '已登記收款（收款紀錄表尚未建立）' : '已登記收款'
     await loadQuotesForRange(selectedCustomerId.value!, quoteFromISO.value, quoteToISO.value)
+    await loadPaymentRecords(selectedCustomerId.value!)
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : 'Failed to update payment'
   } finally {
@@ -484,6 +521,7 @@ watch(selectedCustomerId, (val) => {
   void loadPendingPickups(val)
   expandedInvoiceDate.value = null
   void loadQuotesForRange(val, quoteFromISO.value, quoteToISO.value)
+  void loadPaymentRecords(val).catch(() => {})
 })
 
 watch(selectedOrderDate, (val) => {
@@ -508,6 +546,7 @@ onMounted(async () => {
     await loadMonthJinForAllCustomers()
     await loadPendingPickups(selectedCustomerId.value)
     await loadQuotesForRange(selectedCustomerId.value, quoteFromISO.value, quoteToISO.value)
+    await loadPaymentRecords(selectedCustomerId.value)
 
     if (qOrderDate && pendingOrderDates.value.includes(qOrderDate)) {
       selectedOrderDate.value = qOrderDate
@@ -740,10 +779,49 @@ onMounted(async () => {
           <div class="mt-1 text-xs text-slate-600">可分批收款；系統依未付欠款由舊到新分配。</div>
 
           <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <div class="label mb-1">收款日期</div>
+            <DatePickerField v-model="paymentDateISO" />
             <div class="label mb-1">本次收款金額</div>
-            <input class="field" type="number" min="0" step="1" inputmode="numeric" placeholder="本次收到幾元" v-model.number="paidTodayAmount" />
+            <input
+              class="field"
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              placeholder="本次收到幾元"
+              :value="paidTodayAmount === 0 ? '' : paidTodayAmount"
+              @input="
+                (paidTodayAmount = Math.max(
+                  0,
+                  Math.trunc(
+                    Number.isFinite(($event.target as HTMLInputElement).valueAsNumber)
+                      ? ($event.target as HTMLInputElement).valueAsNumber
+                      : 0,
+                  ),
+                ))
+              "
+            />
             <div class="mt-3">
               <button class="btn-primary w-full" :disabled="loading" @click="receiveCustomerPayment">登記這筆收款</button>
+            </div>
+          </div>
+
+          <div class="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-sm font-bold text-slate-900">目前欠款</div>
+              <div class="text-base font-bold tabular-nums" :class="monthlyUnpaidTotal > 0 ? 'text-red-600' : 'text-emerald-700'">
+                {{ currency(monthlyUnpaidTotal) }} 元
+              </div>
+            </div>
+            <div class="mt-3">
+              <div class="text-sm font-bold text-slate-900">收款紀錄</div>
+              <div v-if="paymentRecords.length === 0" class="mt-2 text-sm text-slate-600">尚無收款紀錄</div>
+              <div v-else class="mt-2 space-y-2">
+                <div v-for="p in paymentRecords" :key="p.id" class="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
+                  <div class="text-sm font-semibold text-slate-700 tabular-nums">{{ formatBillingDateShort(p.payment_date) }}</div>
+                  <div class="text-sm font-bold text-slate-900 tabular-nums">{{ currency(p.amount) }} 元</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -767,7 +845,7 @@ onMounted(async () => {
 
           <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
             <div class="text-sm font-bold text-slate-900">查看區間</div>
-            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="mt-3 grid grid-cols-2 gap-3">
               <div>
                 <div class="label mb-1">開始</div>
                 <DatePickerField v-model="quoteFromISO" />

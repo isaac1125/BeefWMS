@@ -10,7 +10,7 @@ function isNavActive(path: string, settings = false): boolean {
 function navLinkClass(path: string, settings = false): string {
   const active = isNavActive(path, settings)
   return [
-    'flex flex-col items-center justify-center gap-1 rounded-card px-1 py-2.5 text-[15px] font-semibold leading-tight transition-colors sm:text-sm',
+    'flex flex-col items-center justify-center gap-1 rounded-card px-1 py-2.5 text-sm font-semibold leading-tight transition-colors sm:text-xs',
     active ? 'bg-brand-500 text-white shadow-sm' : 'text-slate-700 hover:bg-slate-50',
   ].join(' ')
 }

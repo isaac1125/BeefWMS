@@ -118,11 +118,11 @@ function pickDate(iso: string) {
     <!-- Mobile: compact bottom sheet（不跟著窄欄壓縮） -->
     <div
       v-if="isOpen"
-      class="sm:hidden fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 px-3 pb-4 pt-10"
+      class="sm:hidden fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-10"
       @click.self="isOpen = false"
     >
       <div
-        class="w-full max-w-[300px] rounded-xl border border-slate-200 bg-white p-2 shadow-xl overflow-visible"
+        class="w-full max-w-[320px] rounded-xl border border-slate-200 bg-white p-2 shadow-xl overflow-visible mb-10"
         @click.stop
       >
         <div class="flex items-center justify-between gap-1">

@@ -540,17 +540,10 @@ function requestSave() {
   void computeStockWarningsForSummary()
 }
 
-function clearFormNumbers() {
-  const next: Record<string, number> = {}
-  for (const it of enabledItems.value) next[it.id] = 0
-  packagesByItemId.value = next
-}
-
 async function savePickupsConfirmed() {
   isSaveModalOpen.value = false
   await savePickups()
   if (errorMessage.value) return
-  clearFormNumbers()
   isSavedModalOpen.value = true
   void refreshPickupMarkedDates(selectedCustomerId.value).catch(() => {})
 }
@@ -635,7 +628,7 @@ watch([activeTab, overviewMonthISO], () => {
     >
       <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
         <div class="text-base font-bold text-slate-900">修改完成</div>
-        <div class="mt-2 text-sm text-slate-700">已成功儲存取貨登記，表單已清空。</div>
+        <div class="mt-2 text-sm text-slate-700">已成功儲存取貨登記。</div>
         <div class="mt-4">
           <button class="btn-primary w-full" @click="isSavedModalOpen = false">知道了</button>
         </div>
@@ -792,8 +785,15 @@ watch([activeTab, overviewMonthISO], () => {
                     inputmode="numeric"
                     min="0"
                     step="1"
-                    :value="getDefaultQuantity(it)"
-                    @input="setQuantity(it.id, ($event.target as HTMLInputElement).valueAsNumber)"
+                    :value="getDefaultQuantity(it) === 0 ? '' : getDefaultQuantity(it)"
+                    @input="
+                      setQuantity(
+                        it.id,
+                        Number.isFinite(($event.target as HTMLInputElement).valueAsNumber)
+                          ? ($event.target as HTMLInputElement).valueAsNumber
+                          : 0,
+                      )
+                    "
                   />
                 </div>
               </div>
@@ -819,8 +819,15 @@ watch([activeTab, overviewMonthISO], () => {
                       inputmode="numeric"
                       min="0"
                       step="1"
-                      :value="getDefaultQuantity(it)"
-                      @input="setQuantity(it.id, ($event.target as HTMLInputElement).valueAsNumber)"
+                      :value="getDefaultQuantity(it) === 0 ? '' : getDefaultQuantity(it)"
+                      @input="
+                        setQuantity(
+                          it.id,
+                          Number.isFinite(($event.target as HTMLInputElement).valueAsNumber)
+                            ? ($event.target as HTMLInputElement).valueAsNumber
+                            : 0,
+                        )
+                      "
                     />
                   </td>
                   <td class="py-3 px-3 text-slate-600 whitespace-nowrap">

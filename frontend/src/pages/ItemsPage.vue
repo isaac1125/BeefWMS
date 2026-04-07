@@ -21,6 +21,42 @@ const draftRequiresWeighing = ref(false)
 const draftDefaultPricePerJin = ref<number>(0)
 const draftDefaultPricePerUnit = ref<number>(0)
 
+const draggingId = ref<string | null>(null)
+
+async function persistItemSortOrder(nextIds: string[]) {
+  loading.value = true
+  errorMessage.value = null
+  successMessage.value = null
+  try {
+    const { localOnly } = await catalog.persistItemOrder(nextIds)
+    successMessage.value = localOnly
+      ? '排序已儲存（本機）。請在 Supabase 執行 migrate_add_items_sort_order.sql，之後會同步到資料庫。'
+      : '排序已更新'
+  } catch (e) {
+    errorMessage.value = e instanceof Error ? e.message : '無法更新排序'
+  } finally {
+    loading.value = false
+  }
+}
+
+function onDragStart(id: string) {
+  draggingId.value = id
+}
+
+function onDropOn(targetId: string) {
+  const fromId = draggingId.value
+  draggingId.value = null
+  if (!fromId || fromId === targetId) return
+
+  const ids = catalog.items.map((x) => x.id)
+  const fromIdx = ids.indexOf(fromId)
+  const toIdx = ids.indexOf(targetId)
+  if (fromIdx < 0 || toIdx < 0) return
+  ids.splice(fromIdx, 1)
+  ids.splice(toIdx, 0, fromId)
+  void persistItemSortOrder(ids)
+}
+
 function resetForm() {
   editingId.value = null
   draftName.value = ''
@@ -139,7 +175,17 @@ onMounted(async () => {
                 step="1"
                 :disabled="!draftRequiresWeighing"
                 :class="!draftRequiresWeighing ? 'bg-slate-100 text-slate-700' : ''"
-                v-model.number="draftDefaultPricePerJin"
+                :value="draftDefaultPricePerJin === 0 ? '' : draftDefaultPricePerJin"
+                @input="
+                  (draftDefaultPricePerJin = Math.max(
+                    0,
+                    Math.trunc(
+                      Number.isFinite(($event.target as HTMLInputElement).valueAsNumber)
+                        ? ($event.target as HTMLInputElement).valueAsNumber
+                        : 0,
+                    ),
+                  ))
+                "
               />
             </div>
             <div>
@@ -151,7 +197,17 @@ onMounted(async () => {
                 step="1"
                 :disabled="draftRequiresWeighing"
                 :class="draftRequiresWeighing ? 'bg-slate-100 text-slate-700' : ''"
-                v-model.number="draftDefaultPricePerUnit"
+                :value="draftDefaultPricePerUnit === 0 ? '' : draftDefaultPricePerUnit"
+                @input="
+                  (draftDefaultPricePerUnit = Math.max(
+                    0,
+                    Math.trunc(
+                      Number.isFinite(($event.target as HTMLInputElement).valueAsNumber)
+                        ? ($event.target as HTMLInputElement).valueAsNumber
+                        : 0,
+                    ),
+                  ))
+                "
               />
             </div>
           </div>
@@ -174,13 +230,26 @@ onMounted(async () => {
 
         <div class="rounded-card border border-slate-200 p-3">
           <div class="text-sm font-bold text-slate-900">品項列表</div>
+          <div class="mt-1 text-xs text-slate-600">可拖拉調整順序（會影響全站顯示順序）</div>
           <div class="mt-3 space-y-2">
-            <div v-for="it in catalog.items" :key="it.id" class="rounded-card border border-slate-200 p-2">
+            <div
+              v-for="it in catalog.items"
+              :key="it.id"
+              class="rounded-card border border-slate-200 p-2"
+              :class="draggingId === it.id ? 'opacity-60' : ''"
+              draggable="true"
+              @dragstart="onDragStart(it.id)"
+              @dragover.prevent
+              @drop.prevent="onDropOn(it.id)"
+            >
               <div class="flex items-center justify-between gap-3">
-                <div>
-                  <div class="text-sm font-bold text-slate-900">{{ it.name }}</div>
-                  <div class="text-xs text-slate-600">
-                    {{ it.requires_weighing ? '秤重' : '按個' }} / {{ it.enabled ? '啟用中' : '已停用' }}
+                <div class="flex items-center gap-2 min-w-0">
+                  <div class="shrink-0 text-slate-400 select-none" title="拖拉排序">≡</div>
+                  <div class="min-w-0">
+                    <div class="text-sm font-bold text-slate-900 truncate">{{ it.name }}</div>
+                    <div class="text-xs text-slate-600">
+                      {{ it.requires_weighing ? '秤重' : '按個' }} / {{ it.enabled ? '啟用中' : '已停用' }}
+                    </div>
                   </div>
                 </div>
                 <button class="btn-ghost px-3 py-2" @click="startEdit(it)">編輯</button>

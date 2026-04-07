@@ -5,6 +5,7 @@ export interface ItemRow {
   requires_weighing: boolean
   default_price_per_jin: number | null
   default_price_per_unit: number | null
+  sort_order?: number | null
 }
 
 export interface CustomerRow {
@@ -45,5 +46,13 @@ export interface BillingRecordRow {
   previous_debt: number
   current_debt: number
   billing_date: string | null
+}
+
+export interface PaymentRecordRow {
+  id: string
+  customer_id: string
+  payment_date: string // YYYY-MM-DD
+  amount: number
+  created_at: string
 }
 
