@@ -845,7 +845,7 @@ onMounted(async () => {
 
           <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
             <div class="text-sm font-bold text-slate-900">查看區間</div>
-            <div class="mt-3 grid grid-cols-2 gap-3">
+            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <div class="label mb-1">開始</div>
                 <DatePickerField v-model="quoteFromISO" />

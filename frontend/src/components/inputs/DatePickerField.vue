@@ -68,10 +68,11 @@ function pickDate(iso: string) {
     <button
       type="button"
       class="field w-full min-h-[2.75rem] text-left flex items-center justify-between gap-2"
+      :title="modelValue || placeholder || '請選擇日期'"
       @click="isOpen = !isOpen"
     >
-      <span class="min-w-0 text-slate-900 tabular-nums whitespace-nowrap">{{ modelValue || placeholder || '請選擇日期' }}</span>
-      <span class="text-slate-500">📅</span>
+      <span class="min-w-0 flex-1 truncate text-slate-900 tabular-nums">{{ modelValue || placeholder || '請選擇日期' }}</span>
+      <span class="shrink-0 text-slate-500">📅</span>
     </button>
 
     <!-- Desktop: dropdown popover -->
