@@ -38,6 +38,36 @@ const orderPricesByItemId = ref<Record<string, CustomerItemPrice>>({})
 const weightJinByPickupId = ref<Record<string, number>>({})
 const weightLiangByPickupId = ref<Record<string, number>>({})
 
+function weightJinDisplayValue(pickupId: string): string | number {
+  const v = weightJinByPickupId.value[pickupId] ?? 0
+  return v === 0 ? '' : v
+}
+
+function onWeightJinInput(pickupId: string, ev: Event) {
+  const t = (ev.target as HTMLInputElement).value.trim()
+  if (t === '') {
+    weightJinByPickupId.value[pickupId] = 0
+    return
+  }
+  const n = Math.trunc(Number(t))
+  weightJinByPickupId.value[pickupId] = Math.min(99, Math.max(0, Number.isFinite(n) ? n : 0))
+}
+
+function weightLiangDisplayValue(pickupId: string): string | number {
+  const v = weightLiangByPickupId.value[pickupId] ?? 0
+  return v === 0 ? '' : v
+}
+
+function onWeightLiangInput(pickupId: string, ev: Event) {
+  const t = (ev.target as HTMLInputElement).value.trim()
+  if (t === '') {
+    weightLiangByPickupId.value[pickupId] = 0
+    return
+  }
+  const n = Math.trunc(Number(t))
+  weightLiangByPickupId.value[pickupId] = Math.min(15, Math.max(0, Number.isFinite(n) ? n : 0))
+}
+
 /** 登記收款：只輸入金額，可分批；分配順序與「報價單日期」無關 */
 const paidTodayAmount = ref<number>(0)
 const paymentDateISO = ref<string>(todayISO)
@@ -779,13 +809,8 @@ onMounted(async () => {
                         max="99"
                         step="1"
                         inputmode="numeric"
-                        :value="weightJinByPickupId[p.id] ?? 0"
-                        @input="
-                          weightJinByPickupId[p.id] = Math.min(
-                            99,
-                            Math.max(0, Math.trunc(Number(($event.target as HTMLInputElement).valueAsNumber ?? 0))),
-                          )
-                        "
+                        :value="weightJinDisplayValue(p.id)"
+                        @input="onWeightJinInput(p.id, $event)"
                       />
                       <div class="text-sm font-semibold text-slate-700 shrink-0">斤</div>
                       <input
@@ -795,13 +820,8 @@ onMounted(async () => {
                         max="15"
                         step="1"
                         inputmode="numeric"
-                        :value="weightLiangByPickupId[p.id] ?? 0"
-                        @input="
-                          weightLiangByPickupId[p.id] = Math.min(
-                            15,
-                            Math.max(0, Math.trunc(Number(($event.target as HTMLInputElement).valueAsNumber ?? 0))),
-                          )
-                        "
+                        :value="weightLiangDisplayValue(p.id)"
+                        @input="onWeightLiangInput(p.id, $event)"
                       />
                       <div class="text-sm font-semibold text-slate-700 shrink-0">兩</div>
                     </template>
