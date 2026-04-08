@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router'
 
 import { supabase, getCustomerItemPrice, type CustomerItemPrice } from '../lib/supabase'
 import { toISODate } from '../lib/week'
-import { jinLiangToTotalLiang, calcAmountByTotalLiang } from '../lib/weight'
+import { jinLiangToTotalLiang, jinLiangToJinDecimal, calcAmountByTotalLiang } from '../lib/weight'
 import { useCatalogStore } from '../stores/catalog'
 import type { ItemRow, PickupRow, PaymentRecordRow } from '../types/db'
 import DatePickerField from '../components/inputs/DatePickerField.vue'
@@ -60,6 +60,8 @@ const monthlyQuotes = ref<
     paid_amount: number
     current_debt: number
     billing_date: string | null
+    /** 取自關聯 pickups.quantity；免秤重品項顯示包數用 */
+    pickup_quantity: number | null
   }>
 >([])
 
@@ -124,6 +126,21 @@ function formatRangeNoYear(fromISO: string, toISO: string): string {
 
 const enabledCustomers = computed(() => catalog.customers.filter((c) => c.enabled))
 
+/** 報價單分頁底部「本月斤數」列舉客戶的合計 */
+const monthJinTotalForWage = computed(() => {
+  return enabledCustomers.value.reduce((sum, c) => {
+    const j = Number(monthJinByCustomerId.value[c.id] ?? 0)
+    return sum + (Number.isFinite(j) ? Math.max(0, j) : 0)
+  }, 0)
+})
+
+function formatWageJinDisplay(v: number | undefined): string {
+  const n = Number(v ?? 0)
+  if (!Number.isFinite(n)) return '0'
+  const x = Math.round(n * 10) / 10
+  return Number.isInteger(x) ? String(x) : x.toFixed(1)
+}
+
 // quotes range (default: this month)
 const quoteFromISO = ref<string>(monthStartISO)
 const quoteToISO = ref<string>(monthEndISO)
@@ -135,7 +152,8 @@ const pendingOrderDates = computed(() => {
 
 const selectedOrderPickups = computed(() => {
   if (!selectedOrderDate.value) return []
-  return pendingPickups.value.filter((p) => p.pickup_date === selectedOrderDate.value)
+  const list = pendingPickups.value.filter((p) => p.pickup_date === selectedOrderDate.value)
+  return [...list].sort((a, b) => compareCatalogItemOrder(a.item_id, b.item_id))
 })
 
 function getItemName(itemId: string): string {
@@ -144,6 +162,18 @@ function getItemName(itemId: string): string {
 
 function getItemById(itemId: string): ItemRow | undefined {
   return catalog.items.find((i: ItemRow) => i.id === itemId)
+}
+
+/** 與設定頁／catalog.items 順序一致（含 sort_order／本機排序）；未知品項排在最後 */
+function compareCatalogItemOrder(itemIdA: string, itemIdB: string): number {
+  const indexOf = (id: string) => {
+    const i = catalog.items.findIndex((x: ItemRow) => x.id === id)
+    return i === -1 ? 999999 : i
+  }
+  const ia = indexOf(itemIdA)
+  const ib = indexOf(itemIdB)
+  if (ia !== ib) return ia - ib
+  return getItemName(itemIdA).localeCompare(getItemName(itemIdB), 'zh-Hant')
 }
 
 function getPriceForPickup(p: PickupRow): CustomerItemPrice | undefined {
@@ -245,13 +275,27 @@ const groupedMonthlyQuotes = computed(() => {
   return Array.from(map.values()).sort((a, b) => (a.billingDate < b.billingDate ? 1 : -1))
 })
 
+function formatQuoteDetailSpec(q: (typeof monthlyQuotes.value)[number]): string {
+  const hasWeight = q.weight_jin != null || q.weight_liang != null
+  if (hasWeight) {
+    return `重 ${Math.trunc(Number(q.weight_jin ?? 0))}斤${Math.trunc(Number(q.weight_liang ?? 0))}兩`
+  }
+  const pk = q.pickup_quantity
+  if (pk != null && Number.isFinite(pk)) {
+    const n = Math.max(0, Math.trunc(Number(pk)))
+    return `${n} 包`
+  }
+  return '包數 —'
+}
+
 const groupedInvoiceDetails = computed(() => {
   const map: Record<
     string,
     Array<{
       id: string
+      itemId: string
       itemName: string
-      weightText: string
+      specText: string
       amountText: string
     }>
   > = {}
@@ -260,18 +304,18 @@ const groupedInvoiceDetails = computed(() => {
     const dateKey = q.billing_date ?? '未設定日期'
     if (!map[dateKey]) map[dateKey] = []
 
-    const hasWeight = q.weight_jin != null || q.weight_liang != null
-    const weightText = hasWeight
-      ? `${Math.trunc(Number(q.weight_jin ?? 0))}斤${Math.trunc(Number(q.weight_liang ?? 0))}兩`
-      : '-'
-
     map[dateKey].push({
       id: q.id,
+      itemId: q.item_id,
       itemName: getItemName(q.item_id),
-      weightText,
+      specText: formatQuoteDetailSpec(q),
       amountText: `${currency(q.total_amount)} 元`,
     })
   })
+
+  for (const k of Object.keys(map)) {
+    map[k].sort((a, b) => compareCatalogItemOrder(a.itemId, b.itemId))
+  }
 
   return map
 })
@@ -344,7 +388,7 @@ async function loadMonthJinForAllCustomers() {
   if (catalog.customers.length === 0) return
   const { data, error } = await supabase
     .from('billing_records')
-    .select('customer_id,weight_jin,billing_date')
+    .select('customer_id,weight_jin,weight_liang,billing_date')
     .gte('billing_date', monthStartISO)
     .lte('billing_date', monthEndISO)
 
@@ -353,9 +397,11 @@ async function loadMonthJinForAllCustomers() {
   const map: Record<string, number> = {}
   ;(data ?? []).forEach((r: any) => {
     const cid = r.customer_id as string
-    const jin = r.weight_jin == null ? 0 : Number(r.weight_jin)
-    if (!Number.isFinite(jin)) return
-    map[cid] = (map[cid] ?? 0) + jin
+    const j = r.weight_jin == null ? 0 : Number(r.weight_jin)
+    const l = r.weight_liang == null ? 0 : Number(r.weight_liang)
+    const add = jinLiangToJinDecimal(j, l)
+    if (!Number.isFinite(add)) return
+    map[cid] = (map[cid] ?? 0) + add
   })
   monthJinByCustomerId.value = map
 }
@@ -364,7 +410,7 @@ async function loadQuotesForRange(customerId: string, fromISO: string, toISO: st
   const { data, error } = await supabase
     .from('billing_records')
     .select(
-      'id,pickup_id,customer_id,item_id,weight_jin,weight_liang,total_amount,paid_amount,current_debt,billing_date',
+      'id,pickup_id,customer_id,item_id,weight_jin,weight_liang,total_amount,paid_amount,current_debt,billing_date,pickups(quantity)',
     )
     .eq('customer_id', customerId)
     .gte('billing_date', fromISO)
@@ -372,7 +418,17 @@ async function loadQuotesForRange(customerId: string, fromISO: string, toISO: st
     .order('billing_date', { ascending: false })
 
   if (error) throw error
-  monthlyQuotes.value = (data ?? []) as any
+
+  monthlyQuotes.value = ((data ?? []) as any[]).map((r) => {
+    const emb = r.pickups
+    let pickup_quantity: number | null = null
+    if (emb && typeof emb === 'object' && emb.quantity != null) {
+      const n = Math.trunc(Number(emb.quantity))
+      pickup_quantity = Number.isFinite(n) ? Math.max(0, n) : null
+    }
+    const { pickups: _drop, ...rest } = r
+    return { ...rest, pickup_quantity } as (typeof monthlyQuotes.value)[number]
+  })
 }
 
 async function submitSelectedOrderBilling() {
@@ -387,12 +443,8 @@ async function submitSelectedOrderBilling() {
   loading.value = true
   try {
     isOrderSaveModalOpen.value = false
-    // deterministic allocation order
-    const sortedPickups = [...pickups].sort((a, b) => {
-      const na = getItemName(a.item_id)
-      const nb = getItemName(b.item_id)
-      return na.localeCompare(nb)
-    })
+    // 與畫面／報價單明細相同：依 catalog 品項順序
+    const sortedPickups = [...pickups].sort((a, b) => compareCatalogItemOrder(a.item_id, b.item_id))
 
     // compute totals upfront
     const totals = sortedPickups.map((p) => calcPickupTotalAmount(p))
@@ -707,13 +759,17 @@ onMounted(async () => {
 
             <div class="mt-3 space-y-2">
               <div v-for="p in selectedOrderPickups" :key="p.id" class="rounded-xl border border-slate-200 bg-white p-3">
-                <div class="grid grid-cols-3 gap-2 text-sm">
-                  <div class="font-bold text-slate-900">{{ getItemName(p.item_id) }}</div>
-                  <div class="text-slate-700">{{ p.quantity }} 包</div>
-                  <div class="text-right text-slate-700">{{ getPriceTextForPickup(p) }}</div>
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-bold text-slate-900">{{ getItemName(p.item_id) }}</div>
+                    <div class="mt-1 text-sm font-semibold text-slate-700">{{ p.quantity }} 包</div>
+                  </div>
+                  <div class="shrink-0 text-right text-sm font-semibold text-slate-700 tabular-nums leading-snug">
+                    {{ getPriceTextForPickup(p) }}
+                  </div>
                 </div>
 
-                <div class="mt-2 flex items-center justify-between gap-3">
+                <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div class="flex items-center gap-2 overflow-x-auto whitespace-nowrap [-webkit-overflow-scrolling:touch]">
                     <template v-if="orderPricesByItemId[p.item_id]?.requiresWeighing">
                       <input
@@ -754,9 +810,9 @@ onMounted(async () => {
                     </template>
                   </div>
 
-                  <div class="flex items-center gap-2 whitespace-nowrap shrink-0">
-                    <div class="text-[11px] text-slate-500 whitespace-nowrap">金額</div>
-                    <div class="text-base font-bold text-brand-600 whitespace-nowrap">{{ currency(calcPickupTotalAmount(p)) }} 元</div>
+                  <div class="flex items-center justify-between gap-3 whitespace-nowrap sm:justify-end sm:shrink-0">
+                    <div class="text-sm font-semibold text-slate-600">金額</div>
+                    <div class="text-sm font-bold text-brand-600 tabular-nums">{{ currency(calcPickupTotalAmount(p)) }} 元</div>
                   </div>
                 </div>
               </div>
@@ -861,35 +917,45 @@ onMounted(async () => {
           <div v-if="groupedMonthlyQuotes.length === 0" class="mt-3 text-sm text-slate-600">此區間尚無報價單</div>
           <div v-else class="mt-4 space-y-3">
             <div v-for="q in groupedMonthlyQuotes" :key="q.billingDate" class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <button type="button" class="w-full text-left p-2.5 transition-colors hover:bg-slate-50/80" @click="expandedInvoiceDate = expandedInvoiceDate === q.billingDate ? null : q.billingDate">
-                <div class="flex items-start justify-between gap-2">
+              <button
+                type="button"
+                class="w-full cursor-pointer text-left p-3 transition-colors duration-200 hover:bg-slate-50/80"
+                @click="expandedInvoiceDate = expandedInvoiceDate === q.billingDate ? null : q.billingDate"
+              >
+                <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0">
-                    <div class="text-sm font-bold text-slate-900">{{ formatBillingDateShort(q.billingDate) }}</div>
-                    <div class="mt-0.5 text-[11px] text-slate-600">{{ q.itemCount }} 項</div>
+                    <div class="text-base font-bold text-slate-900">{{ formatBillingDateShort(q.billingDate) }}</div>
+                    <div class="mt-1 text-sm text-slate-600">{{ q.itemCount }} 項</div>
                   </div>
                   <div class="shrink-0 text-right">
                     <div class="text-sm font-bold tabular-nums" :class="q.currentDebt > 0 ? 'text-red-600' : 'text-emerald-700'">
                       未付 {{ currency(q.currentDebt) }}
                     </div>
-                    <div class="mt-0.5 text-[11px] font-semibold text-brand-600">
-                      {{ expandedInvoiceDate === q.billingDate ? '收合 ▲' : '明細 ▼' }}
+                    <div class="mt-1 text-sm font-semibold text-brand-600">
+                      {{ expandedInvoiceDate === q.billingDate ? '收合' : '看明細' }}
                     </div>
                   </div>
                 </div>
-                <div class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-slate-600">
-                  <span class="tabular-nums">總 {{ currency(q.totalAmount) }}</span>
-                  <span class="tabular-nums">已付 {{ currency(q.paidAmount) }}</span>
+                <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
+                  <span class="font-semibold tabular-nums">總 {{ currency(q.totalAmount) }} 元</span>
+                  <span class="tabular-nums">已付 {{ currency(q.paidAmount) }} 元</span>
                 </div>
               </button>
 
-              <div v-if="expandedInvoiceDate === q.billingDate" class="border-t border-slate-100 bg-slate-50/70 px-2.5 py-2.5">
-                <div class="text-[11px] font-bold text-slate-700">品項明細</div>
-                <div class="mt-2 space-y-1.5">
-                  <div v-for="d in groupedInvoiceDetails[q.billingDate] ?? []" :key="d.id" class="rounded-lg border border-slate-200/80 bg-white px-2.5 py-2">
-                    <div class="text-sm font-semibold text-slate-900 leading-snug break-words">{{ d.itemName }}</div>
-                    <div class="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-[11px]">
-                      <span class="text-slate-600">重 {{ d.weightText }}</span>
-                      <span class="font-bold text-slate-900 tabular-nums">{{ d.amountText }}</span>
+              <div v-if="expandedInvoiceDate === q.billingDate" class="border-t border-slate-100 bg-slate-50/70 px-3 py-3">
+                <div class="text-sm font-bold text-slate-800">品項明細</div>
+                <div class="mt-2 space-y-2">
+                  <div
+                    v-for="d in groupedInvoiceDetails[q.billingDate] ?? []"
+                    :key="d.id"
+                    class="rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm"
+                  >
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="min-w-0 flex-1">
+                        <div class="text-sm font-bold text-slate-900 leading-snug break-words">{{ d.itemName }}</div>
+                        <div class="mt-1 text-sm font-semibold text-slate-700">{{ d.specText }}</div>
+                      </div>
+                      <div class="shrink-0 text-sm font-bold tabular-nums text-slate-900">{{ d.amountText }}</div>
                     </div>
                   </div>
                 </div>
@@ -900,11 +966,35 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="text-xs text-slate-600 px-1">
-          本月斤數（工資用）：
-          <span v-for="c in enabledCustomers" :key="c.id" class="mr-3">
-            {{ c.name }} {{ monthJinByCustomerId[c.id] ?? 0 }}斤
-          </span>
+        <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div class="text-sm font-bold text-slate-900">本月斤數（工資用）</div>
+          <p class="mt-1 text-xs text-slate-500">
+            統計範圍為行事曆本月（與上方「查看區間」無關）。工資用斤數會將「斤／兩」依 16 兩 = 1 斤換算成小數後加總（可出現半斤等）；其餘秤重報價流程仍為兩 0～15。
+          </p>
+          <div class="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+            <table class="w-full min-w-[240px] text-sm">
+              <thead class="bg-slate-50/90 text-left text-slate-600">
+                <tr>
+                  <th class="py-2 px-3 font-semibold">客戶</th>
+                  <th class="py-2 px-3 text-right font-semibold whitespace-nowrap">本月斤數</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in enabledCustomers" :key="c.id" class="border-t border-slate-100">
+                  <td class="py-2 px-3 font-medium text-slate-900">{{ c.name }}</td>
+                  <td class="py-2 px-3 text-right tabular-nums text-slate-800">
+                    {{ formatWageJinDisplay(monthJinByCustomerId[c.id]) }} 斤
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot class="border-t-2 border-slate-200 bg-slate-50/70 font-bold text-slate-900">
+                <tr>
+                  <td class="py-2 px-3">總計</td>
+                  <td class="py-2 px-3 text-right tabular-nums">{{ formatWageJinDisplay(monthJinTotalForWage) }} 斤</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       </template>
     </div>

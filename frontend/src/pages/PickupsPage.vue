@@ -745,6 +745,15 @@ watch([activeTab, overviewMonthISO], () => {
               <div class="min-w-0">
                 <div class="label mb-1">取貨日期</div>
                 <DatePickerField v-model="pickupDateISO" :marked-dates="pickupMarkedDateSet" />
+                <div class="mt-2 text-xs text-slate-600">
+                  <span class="inline-flex items-center gap-2">
+                    <span
+                      class="pointer-events-none h-2 w-2 shrink-0 rounded-full bg-amber-400 ring-2 ring-white"
+                      aria-hidden="true"
+                    />
+                    黃點：此客戶該日有待秤重／已報價取貨紀錄
+                  </span>
+                </div>
               </div>
             </div>
 
