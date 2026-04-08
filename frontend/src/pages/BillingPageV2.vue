@@ -30,9 +30,12 @@ const pendingPickups = ref<PickupRow[]>([])
 const selectedOrderDate = ref<string | null>(null)
 const isOrderSaveModalOpen = ref(false)
 const isOrderSavedModalOpen = ref(false)
+const isMonthJinModalOpen = ref(false)
 
 // pricing per item for the currently selected order date
 const orderPricesByItemId = ref<Record<string, CustomerItemPrice>>({})
+// pricing per item for quote details (current price as reference)
+const quotePricesByItemId = ref<Record<string, CustomerItemPrice>>({})
 
 // weight inputs by pickup_id
 const weightJinByPickupId = ref<Record<string, number>>({})
@@ -127,6 +130,13 @@ function currency(n: number): string {
   const v = Number(n ?? 0)
   if (!Number.isFinite(v)) return '0'
   return Math.trunc(v).toString()
+}
+
+function quoteUnitPriceText(itemId: string): string {
+  const p = quotePricesByItemId.value[itemId]
+  if (!p) return '—'
+  if (p.requiresWeighing) return `${currency(p.pricePerJin ?? 0)} 元/斤`
+  return `${currency(p.pricePerUnit ?? 0)} 元/包`
 }
 
 /** 報價單日期顯示為 M/D，不含年份（非 ISO 或「未設定日期」則原樣） */
@@ -306,16 +316,15 @@ const groupedMonthlyQuotes = computed(() => {
 })
 
 function formatQuoteDetailSpec(q: (typeof monthlyQuotes.value)[number]): string {
+  const pk = q.pickup_quantity
+  const pkText =
+    pk != null && Number.isFinite(pk) ? `${Math.max(0, Math.trunc(Number(pk)))} 包` : '包數 —'
+
   const hasWeight = q.weight_jin != null || q.weight_liang != null
   if (hasWeight) {
-    return `重 ${Math.trunc(Number(q.weight_jin ?? 0))}斤${Math.trunc(Number(q.weight_liang ?? 0))}兩`
+    return `${pkText} · 重 ${Math.trunc(Number(q.weight_jin ?? 0))}斤${Math.trunc(Number(q.weight_liang ?? 0))}兩`
   }
-  const pk = q.pickup_quantity
-  if (pk != null && Number.isFinite(pk)) {
-    const n = Math.max(0, Math.trunc(Number(pk)))
-    return `${n} 包`
-  }
-  return '包數 —'
+  return pkText
 }
 
 const groupedInvoiceDetails = computed(() => {
@@ -326,6 +335,7 @@ const groupedInvoiceDetails = computed(() => {
       itemId: string
       itemName: string
       specText: string
+      unitPriceText: string
       amountText: string
     }>
   > = {}
@@ -339,6 +349,7 @@ const groupedInvoiceDetails = computed(() => {
       itemId: q.item_id,
       itemName: getItemName(q.item_id),
       specText: formatQuoteDetailSpec(q),
+      unitPriceText: quoteUnitPriceText(q.item_id),
       amountText: `${currency(q.total_amount)} 元`,
     })
   })
@@ -459,6 +470,14 @@ async function loadQuotesForRange(customerId: string, fromISO: string, toISO: st
     const { pickups: _drop, ...rest } = r
     return { ...rest, pickup_quantity } as (typeof monthlyQuotes.value)[number]
   })
+
+  const uniqueItemIds = Array.from(new Set(monthlyQuotes.value.map((q) => q.item_id)))
+  const prices = await Promise.all(uniqueItemIds.map((itemId) => getCustomerItemPrice(customerId, itemId)))
+  const next: Record<string, CustomerItemPrice> = {}
+  uniqueItemIds.forEach((id, idx) => {
+    next[id] = prices[idx]
+  })
+  quotePricesByItemId.value = next
 }
 
 async function submitSelectedOrderBilling() {
@@ -640,6 +659,49 @@ onMounted(async () => {
 <template>
   <div class="p-4 bg-slate-50/70 min-h-full">
     <div
+      v-if="isMonthJinModalOpen"
+      class="fixed inset-0 z-[120] flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))] sm:pb-4"
+      @click.self="isMonthJinModalOpen = false"
+    >
+      <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-base font-bold text-slate-900">本月斤數（工資用）</div>
+            <p class="mt-1 text-xs text-slate-500">
+              統計範圍為行事曆本月（與報價單查看區間無關）。工資用斤數會將「斤／兩」依 16 兩 = 1 斤換算成小數後加總（可出現半斤等）；其餘秤重報價流程仍為兩 0～15。
+            </p>
+          </div>
+          <button type="button" class="btn-ghost bg-white shrink-0" @click="isMonthJinModalOpen = false">關閉</button>
+        </div>
+
+        <div class="mt-3 rounded-lg border border-slate-200 overflow-hidden">
+          <table class="w-full text-sm table-fixed">
+            <thead class="bg-slate-50/90 text-left text-slate-600">
+              <tr>
+                <th class="py-2 px-3 font-semibold w-[65%]">客戶</th>
+                <th class="py-2 px-3 text-right font-semibold w-[35%] whitespace-nowrap">本月斤數</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="c in enabledCustomers" :key="c.id" class="border-t border-slate-100">
+                <td class="py-2 px-3 font-medium text-slate-900 truncate">{{ c.name }}</td>
+                <td class="py-2 px-3 text-right tabular-nums text-slate-800">
+                  {{ formatWageJinDisplay(monthJinByCustomerId[c.id]) }} 斤
+                </td>
+              </tr>
+            </tbody>
+            <tfoot class="border-t-2 border-slate-200 bg-slate-50/70 font-bold text-slate-900">
+              <tr>
+                <td class="py-2 px-3">總計</td>
+                <td class="py-2 px-3 text-right tabular-nums">{{ formatWageJinDisplay(monthJinTotalForWage) }} 斤</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div
       v-if="isOrderSavedModalOpen"
       class="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 p-4 pb-[max(1rem,calc(5.5rem+env(safe-area-inset-bottom)))] sm:pb-4"
       @click.self="isOrderSavedModalOpen = false"
@@ -707,7 +769,10 @@ onMounted(async () => {
             <h1 class="text-xl font-bold tracking-tight text-slate-900">結帳中心</h1>
             <div class="mt-1 text-xs text-slate-600">秤重報價、收款、未付查詢</div>
           </div>
-          <div class="text-xs text-slate-600" v-if="loading">處理中...</div>
+          <div class="flex items-center gap-2">
+            <button type="button" class="btn-ghost bg-white" @click="isMonthJinModalOpen = true">本月斤數</button>
+            <div class="text-xs text-slate-600" v-if="loading">處理中...</div>
+          </div>
         </div>
 
         <div class="mt-4">
@@ -974,6 +1039,9 @@ onMounted(async () => {
                       <div class="min-w-0 flex-1">
                         <div class="text-sm font-bold text-slate-900 leading-snug break-words">{{ d.itemName }}</div>
                         <div class="mt-1 text-sm font-semibold text-slate-700">{{ d.specText }}</div>
+                        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-600">
+                          <span>單價 {{ d.unitPriceText }}</span>
+                        </div>
                       </div>
                       <div class="shrink-0 text-sm font-bold tabular-nums text-slate-900">{{ d.amountText }}</div>
                     </div>
@@ -986,36 +1054,6 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div class="text-sm font-bold text-slate-900">本月斤數（工資用）</div>
-          <p class="mt-1 text-xs text-slate-500">
-            統計範圍為行事曆本月（與上方「查看區間」無關）。工資用斤數會將「斤／兩」依 16 兩 = 1 斤換算成小數後加總（可出現半斤等）；其餘秤重報價流程仍為兩 0～15。
-          </p>
-          <div class="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-            <table class="w-full min-w-[240px] text-sm">
-              <thead class="bg-slate-50/90 text-left text-slate-600">
-                <tr>
-                  <th class="py-2 px-3 font-semibold">客戶</th>
-                  <th class="py-2 px-3 text-right font-semibold whitespace-nowrap">本月斤數</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="c in enabledCustomers" :key="c.id" class="border-t border-slate-100">
-                  <td class="py-2 px-3 font-medium text-slate-900">{{ c.name }}</td>
-                  <td class="py-2 px-3 text-right tabular-nums text-slate-800">
-                    {{ formatWageJinDisplay(monthJinByCustomerId[c.id]) }} 斤
-                  </td>
-                </tr>
-              </tbody>
-              <tfoot class="border-t-2 border-slate-200 bg-slate-50/70 font-bold text-slate-900">
-                <tr>
-                  <td class="py-2 px-3">總計</td>
-                  <td class="py-2 px-3 text-right tabular-nums">{{ formatWageJinDisplay(monthJinTotalForWage) }} 斤</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
       </template>
     </div>
   </div>

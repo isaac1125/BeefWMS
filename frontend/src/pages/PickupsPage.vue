@@ -702,17 +702,23 @@ watch([activeTab, overviewMonthISO], () => {
         <div class="grid grid-cols-2 gap-2">
           <button
             type="button"
-            class="rounded-xl px-3 py-2 text-sm font-semibold"
-            :class="activeTab === 'entry' ? 'bg-brand-100 text-slate-900' : 'bg-white text-slate-700 hover:bg-slate-50'"
+            class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors"
+            :class="
+              activeTab === 'entry'
+                ? 'border-brand-500 bg-brand-100 text-slate-900'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+            "
             @click="activeTab = 'entry'"
           >
             取貨登記
           </button>
           <button
             type="button"
-            class="rounded-xl px-3 py-2 text-sm font-semibold"
+            class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors"
             :class="
-              activeTab === 'overview' ? 'bg-brand-100 text-slate-900' : 'bg-white text-slate-700 hover:bg-slate-50'
+              activeTab === 'overview'
+                ? 'border-brand-500 bg-brand-100 text-slate-900'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
             "
             @click="activeTab = 'overview'"
           >
